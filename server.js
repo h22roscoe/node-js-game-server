@@ -1,27 +1,29 @@
+/*jslint plusplus: true, maxlen: 80*/
+
 /*
 Script: Node.JS Game Server - Core Server
 Author: Huy Tran
 Email: kingbazoka@gmail.com
 Description: 
- This project aim to create an easy to use multiplayer game server, programmers only 
- have to implement gameplay logic which will be run in each game room and don't have
- to care much about the core server.
- The Core Server is a room-based multiplayer system that enable players connect, chat
- in Global Lobby, join/create room, chat in rooms.
+ This project aim to create an easy to use multiplayer game server,
+ programmers only have to implement gameplay logic which will be run in
+ each game room and don't have to care much about the core server.
+ The Core Server is a room-based multiplayer system that enable players
+ connect, chat in Global Lobby, join/create room, chat in rooms.
  Room Logic will be implemented in run() method of the file: room.js
 -------------------------------------------
 
 CORE SERVER MESSAGES:
 
 1) Player connected to server
-	RECEIVE: 	[CONNECTED;<player-name>]		(Everyone except sender)
+	RECEIVE:   [CONNECTED;<player-name>]       (Everyone except sender)
 	
 2) Player disconnected from server
-	RECEIVE:	[DISCONNECTED;<player-name>] 	(Everyone except sender)
+	RECEIVE:	[DISCONNECTED;<player-name>]   (Everyone except sender)
 	
 3) Player send a chat message in Global chat
-	SEND: 		[CHAT;<message>]
-	RECEIVE: 	[CHAT;<player-name>;<message>]	(Everyone in Global lobby)
+	SEND:       [CHAT;<message>]
+	RECEIVE:    [CHAT;<player-name>;<message>]	(Everyone in Global lobby)
 
 4) Player created a Room
 	SEND:		[CREATEROOM;<room-name>;<max-players>]
@@ -47,7 +49,8 @@ CORE SERVER MESSAGES:
 	
 9) Ready/Cancel in room:
 	SEND:		[READY] / [CANCEL]
-	RECEIVE:	[PLAYERREADY;<player-name>] / [PLAYERCANCEL;<player-name>] (Players already in room)
+	RECEIVE:	[PLAYERREADY;<player-name>] / [PLAYERCANCEL;<player-name>]
+                                                   (Players already in room)
 */
 
 /*
@@ -57,7 +60,9 @@ TODO:
 
 DEV DIARY:
 
-7:00 - 13/10/2013: It's a beautiful sunday, have nothing to do. So, I decided to make something. I will learn node.js and make something fun today!
+7:00 - 13/10/2013: It's a beautiful sunday, have nothing to do.
+                    So, I decided to make something.
+                    I will learn node.js and make something fun today!
 
 15:00 - 13/10/2013: Sorry guys, my girlfriend coming. Stop coding now >:)
 
@@ -72,10 +77,13 @@ DEV DIARY:
 	- Chat in room
 	- Room.js module
 
-15/10/2013: Today, the storm coming to the city, I got a day off so I spent all my day to coding =]]
+15/10/2013: Today, the storm coming to the city,
+                    I got a day off so I spent all my day to coding =]]
 	- Add Find functions for arrays (to find room/player by name)
-	- Add Room Type (to create many types of room with different game logic - eg: deathmatch, capture the flags,...)
-	- Add Room state switching functions and auto switch state when player connected
+	- Add Room Type (to create many types of room with different
+        game logic - eg: deathmatch, capture the flags,...)
+	- Add Room state switching functions and auto switch state when
+        player connected
 	- Add Player ready function (to switch ready/waiting when player is in room)
 	- Add realtime update for room
 	- Auto remove unused room (finished room, playing room with no players,...)
@@ -84,338 +92,420 @@ DEV DIARY:
 var roomScript = require('./room.js');
 
 var net = require('net');
-var serverPort = 8888;
+var serverPort = process.env.PORT || 8888;
 
 // Define Player class and player list
 var playerList = [];
-function Player(_x, _y, _name, _socket)
-{
-	this.x = _x;
-	this.y = _y;
-	this.name = _name;
-	this.room = null;
-	this.socket = _socket;
-	this.is_ready = false;
-	
-	this.Ready = function()
-	{
-		if (this.room != null)
-		{
-			this.is_ready = true;
-			this.room.broadCast("[PLAYERREADY;" + this.name + "]", this); // Send ready message to all players	
-		}
-	}
-	
-	this.Cancel = function()
-	{
-		if (this.room != null)
-		{
-			this.is_ready = false;
-			this.room.broadCast("[PLAYERCANCEL;" + this.name + "]", this); // Send cancel message to all players	
-		}		
-	}
-
-	this.joinRoom = function(roomName)
-	{
-		var cplayer = this;
-		var roomExist = false;
-		roomList.forEach(function(r){
-			if (r.name == roomName)
-			{
-				roomExist = true;
-				console.log("> ROOM EXIST! Count:" + r.playerCount + " / " + r.maxPlayer);
-				if (r.playerCount < r.maxPlayer)
-				{
-					r.players.push(cplayer);
-					r.playerCount++;
-					// Switch room state
-					if (r.playerCount < r.maxPlayer) 
-					{
-						r.Wait(); // Still waiting for players
-					}
-					else
-					{
-						if (r.IsWaiting()) r.Ready(); // Switch to ready state
-					}
-					cplayer.room = r;
-					console.log("[!] " + cplayer.name + " joined room " + r.name);
-					r.broadCast("[JOINROOM;" + cplayer.name + "]", cplayer);	
-					cplayer.socket.write("[JOINEDROOM;" + r.name + "]");
-				}
-				else
-				{
-					cplayer.socket.write("[ROOMFULL;" + r.name + "]");
-					console.log("[!] Room " + r.name + " is full");
-				}
-			}
-		});
-		if (roomExist == false)
-		{
-			cplayer.socket.write("[NOROOM;" + roomName + "]");	
-			console.log("[!] Room " + roomName + " not found");
-		}
-	}
-
-	this.leaveRoom = function()
-	{
-		if (this.room != null)
-		{
-			this.room.players.remove(this);
-			this.room.playerCount--;
-			if (this.room.playerCount < this.room.maxPlayer)
-			{
-				this.room.Wait();
-			}
-			this.room.broadCast("[LEFTROOM;" + this.name + "]", this);
-			console.log("[!] " + this.name + " left room " + this.room.name);
-			this.room = null;
-		}
-	}
-}
 
 // Define Room class and room list
 var roomList = [];
-function Room(_name, _maxPlayer)
-{
-	console.log("[*] Creating room with params: {" + _name + ":" + _maxPlayer + "}");
-	this.name = _name;
-	this.maxPlayer = _maxPlayer;
-	this.playerCount = 0;
-	this.players = [];
-	this.roomState = 'WAITING'; // WAITING - READY - PLAYING - FINISHED
-	this.roomType = 'Type01'; // Check this in room.js to create more game types
-	
-	this.broadCast = function(message, _except)
-	{
-		this.players.forEach(function(p){
-			console.log("> Check " + p.name + " : " + _except.name);
-			if (p.name != _except.name)
-			{
-				p.socket.write(message);
-			}
-		});
-	}
-	
-	// Switch state
-	this.Wait = function()
-	{
-		this.roomState = "WAITING";
-	}
-	this.IsWaiting = function()
-	{
-		return (this.roomState == "WAITING");
-	}
-	
-	this.Ready = function()
-	{
-		this.roomState = "READY";
-	}
-	this.IsReady = function()
-	{
-		return (this.roomState == "READY");
-	}
-	
-	this.Play = function()
-	{
-		this.roomState = "PLAYING";
-	}
-	this.IsPlaying = function()
-	{
-		return (this.roomState == "PLAYING");
-	}
-	
-	this.Finish = function()
-	{
-		this.roomState = "FINISHED";
-	}
-	this.IsFinished = function()
-	{
-		return (this.roomState == "FINISHED");
-	}
-	
+
+function Player(name, socket) {
+    "use strict";
+
+    this.name = name;
+    this.room = null;
+    this.socket = socket;
+    this.isReady = false;
+
+    this.ready = function () {
+        if (this.room !== null) {
+            this.isReady = true;
+
+            // Send ready message to all players
+            this.room.broadcast("[PLAYERREADY;" + this.name + "]", this);
+        }
+    };
+
+    this.cancel = function () {
+        if (this.room !== null) {
+            this.isReady = false;
+
+            // Send cancel message to all players
+            this.room.broadcast("[PLAYERCANCEL;" + this.name + "]", this);
+        }
+    };
+
+    this.joinRoom = function (roomName) {
+        var cplayer = this,
+            roomExist = false;
+
+        roomList.forEach(function (r) {
+            if (r.name === roomName) {
+                roomExist = true;
+
+                console.log("> ROOM EXIST! Count:"
+                            + r.playerCount + " / " + r.maxPlayerId);
+
+                if (r.playerCount < r.maxPlayerId) {
+                    r.players.push(cplayer);
+                    r.playerCount++;
+
+                    // Switch room state
+                    if (r.playerCount < r.maxPlayerId) {
+                        r.Wait(); // Still waiting for players
+                    } else {
+                        if (r.isWaiting()) {
+                            // Switch to ready state
+                            r.ready();
+                        }
+                    }
+
+                    cplayer.room = r;
+
+                    console.log("[!] " + cplayer.name +
+                        " joined room " + r.name);
+
+                    r.broadcast("[JOINROOM;" + cplayer.name + "]", cplayer);
+
+                    cplayer.socket.write("[JOINEDROOM;" + r.name + "]");
+                } else {
+                    cplayer.socket.write("[ROOMFULL;" + r.name + "]");
+
+                    console.log("[!] Room " + r.name + " is full");
+                }
+            }
+        });
+
+        if (roomExist === false) {
+            cplayer.socket.write("[NOROOM;" + roomName + "]");
+
+            console.log("[!] Room " + roomName + " not found");
+        }
+    };
+
+    this.leaveRoom = function () {
+        if (this.room !== null) {
+            remove(this.room.players, this);
+            this.room.playerCount--;
+
+            if (this.room.playerCount < this.room.maxPlayerId) {
+                this.room.wait();
+            }
+
+            this.room.broadcast("[LEFTROOM;" + this.name + "]", this);
+
+            console.log("[!] " + this.name + " left room " + this.room.name);
+
+            this.room = null;
+        }
+    };
+}
+
+function Room(name, maxPlayerId) {
+    "use strict";
+
+    console.log("[*] Creating room with params: {" + name + ":" + maxPlayerId +
+        "}");
+
+    this.name = name;
+    this.maxPlayerId = maxPlayerId;
+    this.playerCount = 0;
+    this.players = [];
+
+    // WAITING - READY - PLAYING - FINISHED
+    this.roomState = 'WAITING';
+
+    // Check this in room.js to create more game types
+    this.roomType = 'Type01';
+
+    this.broadcast = function (message, except) {
+        this.players.forEach(function (p) {
+            console.log("> Check " + p.name + " : " + except.name);
+            if (p.name !== except.name) {
+                p.socket.write(message);
+            }
+        });
+    };
+
+    // Switch state
+    this.wait = function () {
+        this.roomState = "WAITING";
+    };
+
+    this.isWaiting = function () {
+        return (this.roomState === "WAITING");
+    };
+
+    this.ready = function () {
+        this.roomState = "READY";
+    };
+
+    this.isReady = function () {
+        return (this.roomState === "READY");
+    };
+
+    this.play = function () {
+        this.roomState = "PLAYING";
+    };
+
+    this.isPlaying = function () {
+        return (this.roomState === "PLAYING");
+    };
+
+    this.finish = function () {
+        this.roomState = "FINISHED";
+    };
+
+    this.isFinished = function () {
+        return (this.roomState === "FINISHED");
+    };
 }
 
 // Add remove function for arrays
-Array.prototype.remove = function(e) {
-  for (var i = 0; i < this.length; i++) {
-    if (e == this[i]) { return this.splice(i, 1); }
-  }
-};
+function remove(arr, elem) {
+    "use strict";
+    var i;
+
+    for (i = arr.length - 1; i >= 0; i--) {
+        if (arr[i] === elem) {
+            return arr.splice(i, 1);
+        }
+    }
+}
 
 // Add find by name function for arrays (to find player or room)
-Array.prototype.find = function(name) {
-	for (var i = 0; i < this.length; i++) {
-		if (name == this[i].name) { return this[i]; }
-	}	
-};
+function findByElemName(arr, name) {
+    "use strict";
+    var i;
+
+    for (i = arr.length; i >= 0; i--) {
+        if (arr[i].name === name) {
+            return arr[i];
+        }
+    }
+
+    return null;
+}
 
 // Add trim feature
-String.prototype.trim=function(){return this.replace(/^\s+|\s+$/g, '');};
-String.prototype.ltrim=function(){return this.replace(/^\s+/,'');};
-String.prototype.rtrim=function(){return this.replace(/\s+$/,'');};
-String.prototype.fulltrim=function(){return this.replace(/(?:(?:^|\n)\s+|\s+(?:$|\n))/,'');};
+if (!String.prototype.trim) {
+    String.prototype.trim = function () {
+        "use strict";
+
+        return this.replace(/^[\s\uFEFF\xA0]+|[\s\uFEFF\xA0]+$/g, '');
+    };
+}
+
+function ltrim(str) {
+    "use strict";
+
+    return str.replace(/^\s+/, '');
+}
+
+function rtrim(str) {
+    "use strict";
+
+    return str.replace(/\s+$/, '');
+}
+
+
+function fulltrim(str) {
+    "use strict";
+
+    return str.replace(/(?:(?:^|\n)\s+|\s+(?:$|\n))/, '');
+}
 
 // Add startsWith and endsWidth function for strings
-String.prototype.startsWith = function(prefix) {
-    return this.indexOf(prefix) === 0;
+if (!String.prototype.startsWith) {
+    String.prototype.startsWith = function (searchString, position) {
+        "use strict";
+
+        position = position || 0;
+        return this.substr(position, searchString.length) === searchString;
+    };
 }
-String.prototype.endsWith = function(suffix) {
-    return this.match(suffix+"$") == suffix;
-};
+
+if (!String.prototype.endsWith) {
+    String.prototype.endsWith = function (searchString, position) {
+        "use strict";
+
+        var subjectString = this.toString(),
+            lastIndex;
+
+        if (typeof position !== 'number' || !isFinite(position)
+                || Math.floor(position) !== position
+                || position > subjectString.length) {
+            position = subjectString.length;
+        }
+
+        position -= searchString.length;
+
+        lastIndex = subjectString.indexOf(searchString, position);
+        return lastIndex !== -1 && lastIndex === position;
+    };
+}
 
 // Global Broadcast Function
-function BroadcastAll(message, except)
-{
-	playerList.forEach(function(p){
-		if (p != except)
-		{
-			p.socket.write(message);
-		}
-	});
+function broadcastAll(message, except) {
+    "use strict";
+
+    playerList.forEach(function (p) {
+        if (p !== except) {
+            p.socket.write(message);
+        }
+    });
 }
-function GlobalChat(message, except)
-{
-	if (except.room == null) // Only players in Global lobby can send message
-	{
-		playerList.forEach(function(p){
-			if (p != except && p.room == null) // Only players in Global lobby can receive the message
-			{
-				p.socket.write(message);
-			}
-		});	
-	}
+
+function globalChat(message, except) {
+    "use strict";
+
+    // Only players in Global lobby can send message
+    if (except.room === null) {
+        playerList.forEach(function (p) {
+            // Only players in Global lobby can receive the message
+            if (p !== except && p.room === null) {
+                p.socket.write(message);
+            }
+        });
+    }
 }
 
 // Update room
-setInterval(function(){
-	roomList.forEach(function(r){
-		if (r.IsFinished() || (!r.IsWaiting() && r.playerCount <= 0))
-		{
-			roomList.remove(r);
-		}
-		if (!r.IsFinished() && r.playerCount > 0)
-		{
-			// Switch from READY to PLAYING mode
-			if (r.IsReady())
-			{
-				var isAllReady = true;
-				r.players.forEach(function(p){
-					if (p.is_ready == false)
-					{
-						isAllReady = false;
-					}
-				});	
-				if (isAllReady)
-				{
-					r.Play();
-				}
-			}
-			roomScript.update(r);	
-		}	
-	});
+setInterval(function () {
+    "use strict";
+
+    roomList.forEach(function (r) {
+        if (r.isFinished() || (!r.isWaiting() && r.playerCount <=
+                0)) {
+            remove(roomList, r);
+        }
+
+        if (!r.isFinished() && r.playerCount > 0) {
+            // Switch from READY to PLAYING mode
+            if (r.isReady()) {
+                var isAllReady = true;
+
+                r.players.forEach(function (p) {
+                    if (p.isReady === false) {
+                        isAllReady = false;
+                    }
+                });
+
+                if (isAllReady) {
+                    r.play();
+                }
+            }
+
+            roomScript.update(r);
+        }
+    });
 }, 10);
 
 // Main Server
-net.createServer(function(socket) {
+net.createServer(function (socket) {
+    "use strict";
+
     // Create new player on connected
-    var player = new Player(0, 0, "player-" + playerList.length, socket);
+    var player = new Player("player-" + playerList.length, socket),
+        receivedData = "",
+        list = "",
+        roomData,
+        roomDataArr,
+        room,
+        roomName,
+        chat;
+
     // Add to PlayerList
     playerList.push(player);
 
     console.log("[!] " + player.name + " connected!");
 
     // Tell everybody the newcomer
-    BroadcastAll("[CONNECTED;" + player.name + "]", player);
+    broadcastAll("[CONNECTED;" + player.name + "]", player);
 
     // Process received data
-    var receivedData = "";
-    socket.on('data', function(data) {
-        receivedData = data + "";
-    	console.log("[i] Data received: " + player.name + " said: " + receivedData);
+    socket.on('data', function (data) {
+        receivedData += data;
+        console.log("[i] Data received: "
+                    + player.name + " said: " + receivedData);
 
-    	// ==================SERVER PROCESSING============================
-    	// Implement chat in lobby feature
-    	if (receivedData.startsWith("[CHAT;"))
-    	{
-    		// Broadcast
-    		var chat = receivedData.substring(6, receivedData.length - 1);
-    		GlobalChat("[CHAT;" + player.name + ";" + chat + "]", player);
-    	}
+        // ==================SERVER PROCESSING=====================
+        // Implement chat in lobby feature
+        if (receivedData.startsWith("[CHAT;")) {
+            // Broadcast
+            chat = receivedData.substring(6, receivedData.length - 1);
+            globalChat("[CHAT;" + player.name + ";" + chat + "]", player);
+        }
 
-    	// Basic Room function: Get list, create, join, leave, chat in room
-    	if (receivedData.startsWith("[GETROOMLIST]"))
-    	{
-    		var list = "";
-    		// Get room list
-    		roomList.forEach(function(r){
-    			list += r.name;
-    		});
-    		socket.write("[ROOMLIST;" + list + "]");
-    	}
-    	if (receivedData.startsWith("[CREATEROOM;"))
-    	{
-    		var roomData = receivedData.substring(12, receivedData.length - 1); // RoomName;MaxPlayer
-    		var roomDataArr = roomData.split(';');
-    		if (roomDataArr.length >= 2)
-    		{
-    			var room = new Room(roomDataArr[0], parseInt(roomDataArr[1]));
-    			roomList.push(room);
-    			console.log("[+] Room " + room.name + " created by " + player.name);
-    			player.leaveRoom();
-    			player.joinRoom(room.name);
-    		}
-    	}
-    	if (receivedData.startsWith("[JOINROOM;"))
-    	{
-    		var roomName = receivedData.substring(10, receivedData.fulltrim().length - 1);
-    		console.log("> SELECTED ROOM: " + roomName);
-			player.joinRoom(roomName);
-    	}
-    	if (receivedData.startsWith("[LEAVEROOM]"))
-    	{
-    		player.leaveRoom();
-    	}
-    	if (receivedData.startsWith("[CHATROOM;"))
-    	{
-    		// Broadcast
-    		var chat = receivedData.substring(10, receivedData.length - 1);
-    		player.room.broadCast("[CHATROOM;" + player.name + ";" + chat + "]", player);
-    	}
-    	if (receivedData.startsWith("[READY]"))
-    	{
-			player.Ready();
-    	}
-    	if (receivedData.startsWith("[CANCEL]"))
-    	{
-	    	player.Cancel();
-    	}
-    	// ===================== EACH ROOM ================================
-    	roomList.forEach(function(r){
-	    	roomScript.run(r, player, receivedData);	
-    	});
-    	// ================================================================
+        // Basic Room function: Get list, create, join, leave, chat in room
+        if (receivedData.startsWith("[GETROOMLIST]")) {
+            // Get room list
+            roomList.forEach(function (r) {
+                list += r.name;
+            });
 
-    	receivedData = "";
+            socket.write("[ROOMLIST;" + list + "]");
+        }
+
+        if (receivedData.startsWith("[CREATEROOM;")) {
+            // RoomName;MaxPlayer
+            roomData = receivedData.substring(12, receivedData.length - 1);
+            roomDataArr = roomData.split(';');
+
+            if (roomDataArr.length >= 2) {
+                room = new Room(roomDataArr[0], parseInt(roomDataArr[1], 10));
+
+                roomList.push(room);
+                console.log("[+] Room "
+                            + room.name + " created by " + player.name);
+                player.leaveRoom();
+                player.joinRoom(room.name);
+            }
+        }
+
+        if (receivedData.startsWith("[JOINROOM;")) {
+            roomName =
+                receivedData.substring(10, receivedData.fulltrim().length - 1);
+            console.log("> SELECTED ROOM: " + roomName);
+            player.joinRoom(roomName);
+        }
+
+        if (receivedData.startsWith("[LEAVEROOM]")) {
+            player.leaveRoom();
+        }
+
+        if (receivedData.startsWith("[CHATROOM;")) {
+            // Broadcast
+            chat = receivedData.substring(10, receivedData.length - 1);
+            player.room.broadcast("[CHATROOM;"
+                                  + player.name + ";" + chat + "]", player);
+        }
+
+        if (receivedData.startsWith("[READY]")) {
+            player.ready();
+        }
+
+        if (receivedData.startsWith("[CANCEL]")) {
+            player.cancel();
+        }
+
+        // ===================== EACH ROOM ================================
+        roomList.forEach(function (r) {
+            roomScript.run(r, player, receivedData);
+        });
+        // ================================================================
+
+        receivedData = "";
     });
 
     // Handle player disconnect event
-    socket.on('close', function(){
-    	player.leaveRoom(); // Leave all room before disconnected
-    	
-    	playerList.remove(player);
+    socket.on('close', function () {
+        player.leaveRoom(); // Leave all room before disconnected
 
-    	console.log("[!] " + player.name + " disconnected!");
+        remove(playerList, player);
 
-    	// Tell everyone Player disconnected
-    	playerList.forEach(function(c){
-    		// Send disconnect notify - MSG: [DC;<player name>]
-    		c.socket.write("[DISCONNECTED;" + player.name + "]");
-    	});
-    	// Close connection
-    	socket.end();
+        console.log("[!] " + player.name + " disconnected!");
+
+        // Tell everyone Player disconnected
+        playerList.forEach(function (c) {
+            // Send disconnect notify - MSG: [DC;<player name>]
+            c.socket.write("[DISCONNECTED;" + player.name + "]");
+        });
+        // Close connection
+        socket.end();
     });
-    
-})
-.listen(serverPort);
+
+}).listen(serverPort);
 
 console.log("Server is running at port " + serverPort);
